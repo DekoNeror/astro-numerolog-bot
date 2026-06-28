@@ -206,7 +206,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "menu":
-        await query.message.reply_text("Выбери что тебя интересует 👇", reply_markup=main_menu())
+        await query.message.edit_text("Выбери что тебя интересует 👇", reply_markup=main_menu())
 
     elif data == "my_data":
         if user.get("name"):
@@ -324,7 +324,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
 
     if not state:
-        await update.message.reply_text("Напиши /start чтобы начать 🌟")
+        await update.message.reply_text("Выбери что тебя интересует 👇", reply_markup=main_menu())
         return
 
     action = state.get("action")
