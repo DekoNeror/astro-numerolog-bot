@@ -1,20 +1,22 @@
 import os
 import logging
-import json
-from datetime import datetime
+import random
+from datetime import datetime, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import JobQueue
 from groq import Groq
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+CHANNEL_ID = "@astro_numerolog_ru"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ---------- База данных пользователей (в памяти) ----------
+# ---------- База данных пользователей ----------
 users_db = {}
 
 def save_user(user_id: int, data: dict):
@@ -76,23 +78,20 @@ def get_ai_reading(nums: dict) -> str:
     return ai_request(f"""Ты опытный нумеролог и астролог. Дай персональный разбор.
 Имя: {nums['name']}, Знак: {nums['zodiac']}, Число жизни: {nums['life_path']}, Число судьбы: {nums['destiny']}
 Дата: {nums['birth_day']}.{nums['birth_month']}.{nums['birth_year']}
-
-Напиши:
 1. 🌟 Характеристика личности
 2. 💫 Число жизненного пути {nums['life_path']}
 3. 🔮 Число судьбы {nums['destiny']}
 4. ♈ {nums['zodiac']} — ключевые черты
-5. 💰 Прогноз на месяц (финансы, отношения, здоровье)
+5. 💰 Прогноз на месяц
 6. ✨ Совет нумеролога
-
-По-русски, тепло, на "ты", с эмодзи, 300-400 слов.""")
+По-русски, тепло, на "ты", эмодзи, 300-400 слов.""")
 
 def get_daily_horoscope(zodiac: str) -> str:
     today = datetime.now().strftime("%d.%m.%Y")
-    return ai_request(f"""Астролог. Гороскоп на {today} для {zodiac}.
+    return ai_request(f"""Гороскоп на {today} для {zodiac}.
 🌅 Энергия дня
 ❤️ Любовь
-💼 Карьера и деньги
+💼 Карьера
 🌿 Здоровье
 🎯 Совет дня
 По-русски, 150-200 слов, позитивно.""", 500)
@@ -102,35 +101,34 @@ def get_tarot(name: str) -> str:
              "Колесница","Сила","Отшельник","Колесо Фортуны","Справедливость",
              "Повешенный","Смерть","Умеренность","Дьявол","Башня","Звезда",
              "Луна","Солнце","Суд","Мир","Шут"]
-    import random
     drawn = random.sample(cards, 3)
     return ai_request(f"""Таролог. Расклад для {name}: прошлое={drawn[0]}, настоящее={drawn[1]}, будущее={drawn[2]}.
-Дай мистический персональный расклад. По-русски, 200-250 слов, с эмодзи 🔮.""", 600)
+Мистический персональный расклад. По-русски, 200-250 слов, эмодзи 🔮.""", 600)
 
 def get_moon_calendar() -> str:
     today = datetime.now().strftime("%d.%m.%Y")
-    return ai_request(f"""Астролог. Лунный календарь на {today}.
-🌙 Фаза луны и её влияние
-✅ Что хорошо делать сегодня
+    return ai_request(f"""Лунный календарь на {today}.
+🌙 Фаза луны
+✅ Что хорошо делать
 ❌ Чего избегать
-💼 Для бизнеса и финансов
+💼 Для бизнеса
 ❤️ Для отношений
 🌿 Для здоровья
-По-русски, 200 слов, с эмодзи.""", 500)
+По-русски, 200 слов, эмодзи.""", 500)
 
 def get_dream(name: str, dream: str) -> str:
     return ai_request(f"""Толкователь снов. {name} видел сон: "{dream}"
-Дай мистическое толкование: символы, послание, что ждёт в будущем.
-По-русски, 200-250 слов, загадочно, с эмодзи 😴🌙.""", 600)
+Мистическое толкование: символы, послание, будущее.
+По-русски, 200-250 слов, загадочно, эмодзи 😴🌙.""", 600)
 
 def get_celebrity_compatibility(name: str, zodiac: str, life_path: int, celeb: str) -> str:
     return ai_request(f"""Нумеролог. Совместимость {name} ({zodiac}, число {life_path}) с {celeb}.
-💑 Совместимость в % и описание
+💑 Совместимость %
 ❤️ В любви
 🤝 В дружбе
 ⚡ Сложности
 ✨ Итог
-По-русски, 200 слов, весело и с юмором, эмодзи.""", 500)
+По-русски, 200 слов, весело, эмодзи.""", 500)
 
 def get_compatibility(name1, date1, name2, date2) -> str:
     nums1 = calculate_numerology(date1, name1)
@@ -140,13 +138,112 @@ def get_compatibility(name1, date1, name2, date2) -> str:
     return ai_request(f"""Нумеролог. Совместимость:
 {name1}: {nums1['zodiac']}, число жизни {nums1['life_path']}, судьбы {nums1['destiny']}
 {name2}: {nums2['zodiac']}, число жизни {nums2['life_path']}, судьбы {nums2['destiny']}
-💑 Общая совместимость (%)
+💑 Совместимость %
 ❤️ В любви
 🤝 В дружбе
 💼 В работе
 ⚡ Сложности
 ✨ Совет
 По-русски, 250 слов, эмодзи.""", 700)
+
+# ---------- АВТОПОСТИНГ В КАНАЛ ----------
+
+async def post_morning_horoscope(context: ContextTypes.DEFAULT_TYPE):
+    """8:00 — Гороскоп дня для всех знаков"""
+    today = datetime.now().strftime("%d.%m.%Y")
+    text = ai_request(f"""Астролог. Гороскоп на {today} для ВСЕХ 12 знаков зодиака.
+Для каждого знака 2-3 предложения. Формат:
+♈ Овен — ...
+♉ Телец — ...
+♊ Близнецы — ...
+♋ Рак — ...
+♌ Лев — ...
+♍ Дева — ...
+♎ Весы — ...
+♏ Скорпион — ...
+♐ Стрелец — ...
+♑ Козерог — ...
+♒ Водолей — ...
+♓ Рыбы — ...
+По-русски, позитивно, эмодзи.""", 1000)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"🌅 *Гороскоп на {today}*\n\n{text}\n\n🔮 Узнай свой персональный разбор в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_affirmation(context: ContextTypes.DEFAULT_TYPE):
+    """12:00 — Аффирмация дня"""
+    text = ai_request("""Напиши вдохновляющую аффирмацию дня.
+Одна мощная фраза + короткое объяснение (3-4 предложения) почему она работает.
+По-русски, позитивно, с энергией, эмодзи ✨💫""", 300)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"💫 *Аффирмация дня*\n\n{text}\n\n🔮 Узнай своё число судьбы в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_moon(context: ContextTypes.DEFAULT_TYPE):
+    """15:00 — Лунный календарь"""
+    text = get_moon_calendar()
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"🌙 *Лунный календарь*\n\n{text}\n\n🔮 Персональный прогноз — в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_evening_wish(context: ContextTypes.DEFAULT_TYPE):
+    """19:00 — Пожелание вечера"""
+    text = ai_request("""Напиши тёплое вечернее пожелание от Вселенной.
+Мистическое, душевное, вдохновляющее. 4-5 предложений.
+Как будто Вселенная лично говорит читателю.
+По-русски, тепло, на "ты", эмодзи 🌟✨🔮""", 300)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"🌟 *Послание Вселенной на этот вечер*\n\n{text}\n\n🔮 Узнай что звёзды говорят лично тебе — в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_sleep_advice(context: ContextTypes.DEFAULT_TYPE):
+    """21:00 — Совет перед сном"""
+    text = ai_request("""Напиши мистический совет перед сном.
+Как зарядиться энергией ночью, что загадать звёздам, какую мысль взять с собой в сон.
+По-русски, спокойно, тепло, на "ты", 4-5 предложений, эмодзи 😴🌙✨""", 300)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"😴 *Совет перед сном*\n\n{text}\n\n🔮 Узнай толкование своего сна — в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_weekly_tarot(context: ContextTypes.DEFAULT_TYPE):
+    """Пятница 18:00 — Карта Таро на неделю"""
+    cards = ["Маг","Жрица","Императрица","Император","Иерофант","Влюблённые",
+             "Колесница","Сила","Отшельник","Колесо Фортуны","Справедливость",
+             "Повешенный","Смерть","Умеренность","Дьявол","Башня","Звезда",
+             "Луна","Солнце","Суд","Мир","Шут"]
+    card = random.choice(cards)
+    text = ai_request(f"""Таролог. Карта недели для всех — {card}.
+Что эта карта означает для всех знаков на этой неделе.
+В любви, работе, финансах, здоровье.
+По-русски, мистично, 200-250 слов, эмодзи 🃏🔮""", 500)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"🃏 *Карта Таро недели — {card}*\n\n{text}\n\n🔮 Получи личный расклад Таро — в боте!",
+        parse_mode="Markdown"
+    )
+
+async def post_weekly_numerology(context: ContextTypes.DEFAULT_TYPE):
+    """Воскресенье 10:00 — Нумерологический прогноз на неделю"""
+    week = datetime.now().strftime("%d.%m.%Y")
+    text = ai_request(f"""Нумеролог. Прогноз на неделю с {week} по числам жизненного пути.
+Для каждого числа (1-9, 11, 22) короткий прогноз на неделю.
+Формат: Число 1 — ..., Число 2 — ... и т.д.
+По-русски, позитивно, эмодзи 🔢✨""", 800)
+    await context.bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=f"🔢 *Нумерологический прогноз недели*\n\n{text}\n\n🔮 Узнай своё число жизненного пути — в боте!",
+        parse_mode="Markdown"
+    )
 
 # ---------- Клавиатуры ----------
 
@@ -165,15 +262,14 @@ def main_menu():
 def back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="menu")]])
 
-CELEBRITIES = ["Илон Маск", "Тейлор Свифт", "Дрейк", "Ариана Гранде",
-               "Криштиану Роналду", "Билл Гейтс", "Леди Гага", "Джонни Депп"]
+CELEBRITIES = ["Илон Маск","Тейлор Свифт","Дрейк","Ариана Гранде",
+               "Криштиану Роналду","Билл Гейтс","Леди Гага","Джонни Депп"]
 
 def celeb_keyboard():
     buttons = [[InlineKeyboardButton(c, callback_data=f"celeb_{c}")] for c in CELEBRITIES]
     buttons.append([InlineKeyboardButton("🏠 Главное меню", callback_data="menu")])
     return InlineKeyboardMarkup(buttons)
 
-# ---------- Состояния ----------
 user_states = {}
 
 # ---------- Handlers ----------
@@ -183,7 +279,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     if user.get("name"):
         text = (f"С возвращением, *{user['name']}*! 🌟\n\n"
-                f"Твой знак: *{user.get('zodiac', '?')}* | Число жизни: *{user.get('life_path', '?')}*\n\n"
+                f"Твой знак: *{user.get('zodiac','?')}* | Число жизни: *{user.get('life_path','?')}*\n\n"
                 f"Выбери что тебя интересует 👇")
     else:
         text = ("🌟 *Добро пожаловать в Астро Нумеролог!*\n\n"
@@ -249,7 +345,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reading = get_ai_reading(nums)
         await query.message.reply_text(
             f"*Разбор для {user['name']}*\n\n{reading}\n\n"
-            f"📊 Число жизни: *{nums['life_path']}* | Число судьбы: *{nums['destiny']}* | *{nums['zodiac']}*\n\n"
+            f"📊 Число жизни: *{nums['life_path']}* | Судьбы: *{nums['destiny']}* | *{nums['zodiac']}*\n\n"
             f"Поделись ботом с другом! 👫",
             parse_mode="Markdown", reply_markup=back_menu())
 
@@ -260,9 +356,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "horoscope":
         if user.get("zodiac"):
             await query.message.reply_text(f"⭐ Составляю гороскоп для *{user['zodiac']}*... ✨", parse_mode="Markdown")
-            horoscope = get_daily_horoscope(user['zodiac'])
+            horoscope = get_daily_horoscope(user["zodiac"])
             await query.message.reply_text(
-                f"*Гороскоп для {user['name']} ({user['zodiac']})*\n\n{horoscope}\n\nПоделись ботом! 🌟",
+                f"*Гороскоп для {user['name']} ({user['zodiac']})*\n\n{horoscope}\n\nПоделись! 🌟",
                 parse_mode="Markdown", reply_markup=back_menu())
         else:
             user_states[user_id] = {"action": "horoscope", "step": "name"}
@@ -273,23 +369,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if name:
             await query.message.reply_text(f"🃏 Тяну карты для *{name}*... ✨", parse_mode="Markdown")
             result = get_tarot(name)
-            await query.message.reply_text(f"*Расклад Таро для {name}*\n\n{result}\n\nПоделись ботом! 🔮",
+            await query.message.reply_text(f"*Расклад Таро для {name}*\n\n{result}\n\nПоделись! 🔮",
                 parse_mode="Markdown", reply_markup=back_menu())
         else:
             user_states[user_id] = {"action": "tarot", "step": "name"}
             await query.message.reply_text("Напиши своё *имя*:", parse_mode="Markdown")
 
     elif data == "moon":
-        await query.message.reply_text("🌙 Составляю лунный календарь на сегодня... ✨")
+        await query.message.reply_text("🌙 Составляю лунный календарь... ✨")
         result = get_moon_calendar()
-        await query.message.reply_text(f"*Лунный календарь*\n\n{result}\n\nПоделись ботом! 🌙",
+        await query.message.reply_text(f"*Лунный календарь*\n\n{result}\n\nПоделись! 🌙",
             parse_mode="Markdown", reply_markup=back_menu())
 
     elif data == "dream":
-        user_states[user_id] = {"action": "dream", "step": "name" if not user.get("name") else "dream"}
         if user.get("name"):
-            await query.message.reply_text("😴 Опиши свой сон подробно:", parse_mode="Markdown")
+            user_states[user_id] = {"action": "dream", "step": "dream", "dreamer": user["name"]}
+            await query.message.reply_text("😴 Опиши свой сон подробно:")
         else:
+            user_states[user_id] = {"action": "dream", "step": "name"}
             await query.message.reply_text("Напиши своё *имя*:", parse_mode="Markdown")
 
     elif data == "compatibility":
@@ -300,7 +397,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         name = user.get("name", "")
         if name:
             await query.message.reply_text(
-                f"👑 *{name}*, выбери знаменитость для проверки совместимости:",
+                f"👑 *{name}*, выбери знаменитость:",
                 parse_mode="Markdown", reply_markup=celeb_keyboard())
         else:
             user_states[user_id] = {"action": "celeb_name", "step": "name"}
@@ -314,7 +411,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(f"👑 Считаю совместимость *{name}* с *{celeb}*... ✨", parse_mode="Markdown")
         result = get_celebrity_compatibility(name, zodiac, life_path, celeb)
         await query.message.reply_text(
-            f"*{name} + {celeb}*\n\n{result}\n\nПоделись с друзьями! 👑",
+            f"*{name} + {celeb}*\n\n{result}\n\nПоделись! 👑",
             parse_mode="Markdown", reply_markup=back_menu())
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,7 +427,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = state.get("action")
     step = state.get("step")
 
-    # НУМЕРОЛОГИЯ
     if action == "numerology":
         if step == "name":
             user_states[user_id]["name"] = text
@@ -353,7 +449,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=back_menu())
             user_states.pop(user_id, None)
 
-    # ГОРОСКОП
     elif action == "horoscope":
         if step == "name":
             user_states[user_id]["name"] = text
@@ -374,10 +469,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=back_menu())
             user_states.pop(user_id, None)
 
-    # ТАРО
     elif action == "tarot":
         if step == "name":
-            user_states[user_id]["name"] = text
             save_user(user_id, {**user, "name": text})
             await update.message.reply_text(f"🃏 Тяну карты для *{text}*... ✨", parse_mode="Markdown")
             result = get_tarot(text)
@@ -385,7 +478,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=back_menu())
             user_states.pop(user_id, None)
 
-    # СОН
     elif action == "dream":
         if step == "name":
             user_states[user_id]["dreamer"] = text
@@ -400,7 +492,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=back_menu())
             user_states.pop(user_id, None)
 
-    # СОВМЕСТИМОСТЬ
     elif action == "compatibility":
         if step == "name1":
             user_states[user_id]["name1"] = text
@@ -423,7 +514,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown", reply_markup=back_menu())
             user_states.pop(user_id, None)
 
-    # ИМЯ ДЛЯ ЗНАМЕНИТОСТИ
     elif action == "celeb_name":
         if step == "name":
             save_user(user_id, {**user, "name": text})
@@ -434,10 +524,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Планировщик постов
+    job_queue = app.job_queue
+    job_queue.run_daily(post_morning_horoscope, time=time(5, 0))   # 8:00 МСК (UTC+3)
+    job_queue.run_daily(post_affirmation, time=time(9, 0))          # 12:00 МСК
+    job_queue.run_daily(post_moon, time=time(12, 0))                # 15:00 МСК
+    job_queue.run_daily(post_evening_wish, time=time(16, 0))        # 19:00 МСК
+    job_queue.run_daily(post_sleep_advice, time=time(18, 0))        # 21:00 МСК
+
+    # Еженедельные посты
+    job_queue.run_daily(post_weekly_tarot, time=time(15, 0),
+                       days=(4,))   # Пятница 18:00 МСК
+    job_queue.run_daily(post_weekly_numerology, time=time(7, 0),
+                       days=(6,))   # Воскресенье 10:00 МСК
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    logger.info("Бот запущен!")
+
+    logger.info("Бот запущен с автопостингом!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
