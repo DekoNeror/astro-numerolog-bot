@@ -7,8 +7,8 @@ from groq import Groq
 
 # ============================
 # ВСТАВЬ СВОИ КЛЮЧИ СЮДА:
-TELEGRAM_TOKEN = "ВСТАВЬ_ТОКЕН_БОТА"
-GROQ_API_KEY = "ВСТАВЬ_GROQ_КЛЮЧ"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 # ============================
 
 logging.basicConfig(level=logging.INFO)
