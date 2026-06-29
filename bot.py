@@ -15,23 +15,56 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+import json
+
 # ========== БАЗА ДАННЫХ ==========
-users_db = {}        # {user_id: {name, date, zodiac, life_path, destiny}}
-all_users = {}       # {user_id: {tg_name, username, joined, blocked, premium_until, referrals, daily_bonus_date, ref_by}}
-user_states = {}     # состояния диалогов
-contests = {}        # {contest_id: {title, description, end_date, winner_id, active}}
-referral_bonuses = {}  # {user_id: days_added}
-sent_posts = {}  # {post_key: date} — защита от дублирования
+DB_FILE = "bot_data.json"
+
+def load_db():
+    global users_db, all_users, contests, sent_posts
+    try:
+        if os.path.exists(DB_FILE):
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            users_db = {int(k): v for k, v in data.get("users_db", {}).items()}
+            all_users = {int(k): v for k, v in data.get("all_users", {}).items()}
+            contests = data.get("contests", {})
+            sent_posts = data.get("sent_posts", {})
+            logger.info(f"База загружена: {len(all_users)} пользователей")
+    except Exception as e:
+        logger.error(f"Ошибка загрузки базы: {e}")
+
+def save_db():
+    try:
+        data = {
+            "users_db": {str(k): v for k, v in users_db.items()},
+            "all_users": {str(k): v for k, v in all_users.items()},
+            "contests": contests,
+            "sent_posts": sent_posts
+        }
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Ошибка сохранения базы: {e}")
+
+users_db = {}
+all_users = {}
+user_states = {}
+contests = {}
+referral_bonuses = {}
+sent_posts = {}
 
 def can_send_post(key):
     today = datetime.now().strftime("%d.%m.%Y")
     if sent_posts.get(key) == today:
         return False
     sent_posts[key] = today
+    save_db()
     return True
 
 def save_user(uid, data):
     users_db[uid] = data
+    save_db()
 
 def get_user(uid):
     return users_db.get(uid, {})
@@ -48,10 +81,12 @@ def track_user(uid, tg_user):
             "daily_bonus_date": None,
             "ref_by": None
         }
+        save_db()
     else:
         all_users[uid]["tg_name"] = tg_user.full_name
         if tg_user.username:
             all_users[uid]["username"] = tg_user.username
+        save_db()
 
 def is_blocked(uid):
     return all_users.get(uid, {}).get("blocked", False)
@@ -85,6 +120,7 @@ def add_premium(uid, days):
         base = datetime.now()
     new_date = base + timedelta(days=days)
     all_users[uid]["premium_until"] = new_date.strftime("%d.%m.%Y")
+    save_db()
 
 def can_daily_bonus(uid):
     u = all_users.get(uid, {})
@@ -663,6 +699,7 @@ async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(context.args[0])
     if uid in all_users:
         all_users[uid]["blocked"] = True
+        save_db()
         await update.message.reply_text(f"⛔ Пользователь {uid} заблокирован.")
     else:
         await update.message.reply_text("Пользователь не найден.")
@@ -676,6 +713,7 @@ async def unblock_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = int(context.args[0])
     if uid in all_users:
         all_users[uid]["blocked"] = False
+        save_db()
         await update.message.reply_text(f"✅ Пользователь {uid} разблокирован.")
 
 async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -979,6 +1017,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"👑 *{text}*, выбери знаменитость:", parse_mode="Markdown", reply_markup=celeb_keyboard())
 
 def main():
+    load_db()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     jq = app.job_queue
     jq.run_daily(post_morning_horoscope, time=time(5, 0))
