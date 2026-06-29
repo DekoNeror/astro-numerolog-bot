@@ -543,65 +543,43 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
+        await update.message.reply_text('No access.')
         return
     total = len(all_users)
     with_data = len(users_db)
-    blocked = sum(1 for u in all_users.values() if u.get("blocked"))
-    text = (
-        f"👑 *АДМИН ПАНЕЛЬ*
-
-"
-        f"📊 *Статистика:*
-"
-        f"👥 Всего пользователей: *{total}*
-"
-        f"📝 Заполнили профиль: *{with_data}*
-"
-        f"⛔ Заблокировано: *{blocked}*
-
-"
-        f"📋 *Список пользователей:*
-"
-    )
+    blocked = sum(1 for u in all_users.values() if u.get('blocked'))
+    lines = ['*ADMIN PANEL*', '', '*Stats:*', f'Users total: {total}', f'Filled profile: {with_data}', f'Blocked: {blocked}', '', '*Users:*']
     if not all_users:
-        text += "_Пока никто не писал боту_"
+        lines.append('No users yet')
     else:
         for uid, u in list(all_users.items())[:30]:
-            status = "⛔" if u.get("blocked") else "✅"
-            name = users_db.get(uid, {}).get("name", "—")
-            text += f"{status} [{u['tg_name']}](tg://user?id={uid}) | @{u['username']} | {name} | {u['joined']}
-"
+            status = 'X' if u.get('blocked') else 'OK'
+            name = users_db.get(uid, {}).get('name', '-')
+            lines.append(f'{status} | {u["tg_name"]} | @{u["username"]} | {name} | {u["joined"]}')
         if len(all_users) > 30:
-            text += f"
-_...и ещё {len(all_users)-30} пользователей_"
+            lines.append(f'...and {len(all_users)-30} more')
+    text = '\n'.join(lines)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧪 Тест пост в канал", callback_data="admin_test")],
-        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_refresh")]
+        [InlineKeyboardButton('Test post to channel', callback_data='admin_test')],
+        [InlineKeyboardButton('Refresh', callback_data='admin_refresh')]
     ])
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await update.message.reply_text(text, reply_markup=keyboard)
 
 async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id != ADMIN_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
+        await update.message.reply_text('No access.')
         return
-    await update.message.reply_text("🔄 Отправляю тестовый пост в канал...")
+    await update.message.reply_text('Sending test post...')
     try:
         await context.bot.send_message(
             chat_id=CHANNEL_ID,
-            text="🧪 *Тестовый пост*
-
-Бот работает и может писать в канал! ✅
-
-Скоро здесь будут ежедневные гороскопы, лунный календарь и многое другое 🔮",
-            parse_mode="Markdown"
+            text='Test post - bot works! Channel connection OK',
+            parse_mode='Markdown'
         )
-        await update.message.reply_text("✅ Пост успешно отправлен в канал!")
+        await update.message.reply_text('Post sent successfully!')
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}
-
-Проверь что бот является администратором канала @astro_numerolog_ru")
+        await update.message.reply_text(f'Error: {e}')
 
 async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
