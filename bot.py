@@ -21,6 +21,14 @@ all_users = {}       # {user_id: {tg_name, username, joined, blocked, premium_un
 user_states = {}     # состояния диалогов
 contests = {}        # {contest_id: {title, description, end_date, winner_id, active}}
 referral_bonuses = {}  # {user_id: days_added}
+sent_posts = {}  # {post_key: date} — защита от дублирования
+
+def can_send_post(key):
+    today = datetime.now().strftime("%d.%m.%Y")
+    if sent_posts.get(key) == today:
+        return False
+    sent_posts[key] = today
+    return True
 
 def save_user(uid, data):
     users_db[uid] = data
@@ -225,6 +233,7 @@ def get_lucky_day_forecast(name, zodiac, life_path):
 
 # ========== АВТОПОСТИНГ ==========
 async def post_morning_horoscope(context):
+    if not can_send_post('morning_horoscope'): return
     today = datetime.now().strftime("%d.%m.%Y")
     text = ai_request(f"""Гороскоп на {today} для всех 12 знаков.
 Для каждого 2-3 предложения:
@@ -234,27 +243,33 @@ async def post_morning_horoscope(context):
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"🌅 *Гороскоп на {today}*\n\n{text}\n\n🔮 Персональный разбор — в боте @astro_numerolog_bot", parse_mode="Markdown")
 
 async def post_affirmation(context):
+    if not can_send_post('affirmation'): return
     text = ai_request("Вдохновляющая аффирмация дня. Одна мощная фраза + 3-4 предложения почему работает. По-русски, эмодзи ✨💫", 300)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"💫 *Аффирмация дня*\n\n{text}\n\n🔮 Твоё число судьбы — в боте!", parse_mode="Markdown")
 
 async def post_moon(context):
+    if not can_send_post('moon'): return
     text = get_moon_calendar()
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"🌙 *Лунный календарь*\n\n{text}\n\n🔮 Персональный прогноз — в боте!", parse_mode="Markdown")
 
 async def post_evening_wish(context):
+    if not can_send_post('evening_wish'): return
     text = ai_request("Тёплое вечернее послание от Вселенной. 4-5 предложений. Мистично, душевно, на ты. Эмодзи 🌟✨🔮", 300)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"🌟 *Послание Вселенной*\n\n{text}\n\n🔮 Узнай что звёзды говорят лично тебе — в боте!", parse_mode="Markdown")
 
 async def post_sleep_advice(context):
+    if not can_send_post('sleep_advice'): return
     text = ai_request("Мистический совет перед сном. Как зарядиться ночью, что загадать звёздам. 4-5 предложений. Спокойно, тепло, эмодзи 😴🌙✨", 300)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"😴 *Совет перед сном*\n\n{text}\n\n🔮 Толкование снов — в боте!", parse_mode="Markdown")
 
 async def post_weekly_tarot(context):
+    if not can_send_post('weekly_tarot'): return
     card = random.choice(["Маг","Жрица","Императрица","Сила","Звезда","Луна","Солнце","Мир","Колесо Фортуны"])
     text = ai_request(f"Карта недели для всех — {card}. Что означает в любви, работе, финансах, здоровье. По-русски, 200-250 слов, эмодзи 🃏🔮", 500)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"🃏 *Карта Таро недели — {card}*\n\n{text}\n\n🔮 Личный расклад — в боте!", parse_mode="Markdown")
 
 async def post_weekly_numerology(context):
+    if not can_send_post('weekly_numerology'): return
     week = datetime.now().strftime("%d.%m.%Y")
     text = ai_request(f"Нумерологический прогноз на неделю с {week}. Для чисел 1-9, 11, 22. Формат: Число 1 — ..., Число 2 — ... По-русски, эмодзи 🔢✨", 800)
     await context.bot.send_message(chat_id=CHANNEL_ID, text=f"🔢 *Нумерологический прогноз недели*\n\n{text}\n\n🔮 Узнай своё число — в боте!", parse_mode="Markdown")
