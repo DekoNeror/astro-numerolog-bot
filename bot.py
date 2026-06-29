@@ -277,7 +277,7 @@ def back_menu():
     ])
 
 def channel_promo():
-    return "\n\n✨ *Подпишись на наш канал* — ежедневные гороскопы, лунный календарь и аффирмации: [Астро Нумеролог](https://t.me/astro_numerolog_ru)" 
+    return "\n\n✨ *Подпишись на наш канал* — ежедневные гороскопы, лунный календарь и аффирмации — подпишись на наш канал!" 
 
 CELEBRITIES = ["Илон Маск","Тейлор Свифт","Дрейк","Ариана Гранде","Криштиану Роналду","Билл Гейтс","Леди Гага","Джонни Депп"]
 
@@ -329,7 +329,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🌟 Прогноз на целый год\n"
                 "🍀 Число удачи на сегодня\n\n"
                 "Выбери что тебя интересует 👇\n\n"
-                "📢 Подпишись на канал: [Астро Нумеролог](https://t.me/astro\_numerolog\_ru)")
+                "📢 Подпишись на канал: [Астро Нумеролог](https://t.me/astro_numerolog_ru)")
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu(uid))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
