@@ -200,6 +200,18 @@ def get_name_numerology(name):
 🌟 Совет как использовать силу своего имени
 По-русски, 250-300 слов, эмодзи.""", 700)
 
+def get_oracle_answer(name, question):
+    return ai_request(f"""Ты древний мистический Оракул. Человек по имени {name} задаёт вопрос: "{question}"
+
+Дай мистический, мудрый и вдохновляющий ответ. Говори загадочно но по делу.
+Структура:
+🔮 Видение Оракула — основной ответ на вопрос
+⚡ Что нужно сделать — конкретный совет
+🌟 Знак Вселенной — на что обратить внимание
+✨ Послание — мудрая фраза напутствие
+
+По-русски, мистично, на ты, 200-250 слов, эмодзи.""", 600)
+
 def get_lucky_day_forecast(name, zodiac, life_path):
     lnum = lucky_number(hash(name))
     return ai_request(f"""Нумеролог. Прогноз на сегодня для {name}.
@@ -261,6 +273,7 @@ def main_menu(uid=None):
         [InlineKeyboardButton("🌟 Прогноз на год", callback_data="yearly")],
         [InlineKeyboardButton("✍️ Нумерология имени", callback_data="name_num")],
         [InlineKeyboardButton("🍀 Число удачи сегодня", callback_data="lucky")],
+        [InlineKeyboardButton("🔮 Задать вопрос Оракулу", callback_data="oracle")],
         [InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="daily_bonus")],
         [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⚙️ Мои данные", callback_data="my_data")],
@@ -471,6 +484,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             user_states[uid] = {"action": "lucky", "step": "name"}
             await query.message.reply_text("Напиши своё *имя*:", parse_mode="Markdown")
+
+    elif data == "oracle":
+        name = user.get("name")
+        if name:
+            user_states[uid] = {"action": "oracle", "step": "question", "name": name}
+            await query.message.reply_text(
+                "🔮 *Оракул слушает тебя...*\n\nЗадай любой вопрос — о любви, карьере, будущем, выборе или чём угодно.\n\nНапиши свой вопрос 👇",
+                parse_mode="Markdown"
+            )
+        else:
+            user_states[uid] = {"action": "oracle_start", "step": "name"}
+            await query.message.reply_text("🔮 Как тебя зовут?", parse_mode="Markdown")
 
     elif data == "celeb":
         if user.get("name"):
@@ -907,6 +932,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         failed += 1
             await update.message.reply_text(f"✅ Рассылка завершена!\n\nОтправлено: {sent}\nОшибок: {failed}")
             user_states.pop(uid, None)
+
+    elif action == "oracle":
+        if step == "question":
+            name = state.get("name") or user.get("name", "Друг")
+            await update.message.reply_text("🔮 Оракул размышляет над твоим вопросом... ✨")
+            result = get_oracle_answer(name, text)
+            await update.message.reply_text(
+                f"🔮 *Ответ Оракула для {name}*\n\n{result}\n\nПоделись! ✨",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔮 Задать ещё вопрос", callback_data="oracle")],
+                    [InlineKeyboardButton("🏠 Главное меню", callback_data="menu")],
+                    [InlineKeyboardButton("📢 Наш канал", url="https://t.me/astro_numerolog_ru")]
+                ])
+            )
+            user_states.pop(uid, None)
+
+    elif action == "oracle_start":
+        if step == "name":
+            save_user(uid, {**user, "name": text})
+            user_states[uid] = {"action": "oracle", "step": "question", "name": text}
+            await update.message.reply_text(
+                f"🔮 *Оракул слушает тебя, {text}...*\n\nЗадай любой вопрос 👇",
+                parse_mode="Markdown"
+            )
 
     elif action == "celeb_name":
         if step == "name":
