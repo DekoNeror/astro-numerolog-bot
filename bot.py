@@ -10,6 +10,7 @@ from groq import Groq
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 CHANNEL_ID = "@astro_numerolog_ru"
+ADMIN_ID = 1473856140
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,12 +19,25 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ---------- База данных пользователей ----------
 users_db = {}
+all_users = {}
 
 def save_user(user_id: int, data: dict):
     users_db[user_id] = data
 
 def get_user(user_id: int) -> dict:
     return users_db.get(user_id, {})
+
+def track_user(user_id: int, tg_user):
+    if user_id not in all_users:
+        all_users[user_id] = {
+            "tg_name": tg_user.full_name,
+            "username": tg_user.username or "—",
+            "joined": datetime.now().strftime("%d.%m.%Y %H:%M"),
+            "blocked": False
+        }
+
+def is_blocked(user_id: int) -> bool:
+    return all_users.get(user_id, {}).get("blocked", False)
 
 # ---------- Нумерология ----------
 
@@ -276,6 +290,10 @@ user_states = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    track_user(user_id, update.message.from_user)
+    if is_blocked(user_id):
+        await update.message.reply_text("⛔ Вы заблокированы.")
+        return
     user = get_user(user_id)
     if user.get("name"):
         text = (f"С возвращением, *{user['name']}*! 🌟\n\n"
@@ -522,6 +540,95 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👑 *{text}*, выбери знаменитость:",
                 parse_mode="Markdown", reply_markup=celeb_keyboard())
 
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
+    total = len(all_users)
+    with_data = len(users_db)
+    blocked = sum(1 for u in all_users.values() if u.get("blocked"))
+    text = (
+        f"👑 *АДМИН ПАНЕЛЬ*
+
+"
+        f"📊 *Статистика:*
+"
+        f"👥 Всего пользователей: *{total}*
+"
+        f"📝 Заполнили профиль: *{with_data}*
+"
+        f"⛔ Заблокировано: *{blocked}*
+
+"
+        f"📋 *Список пользователей:*
+"
+    )
+    if not all_users:
+        text += "_Пока никто не писал боту_"
+    else:
+        for uid, u in list(all_users.items())[:30]:
+            status = "⛔" if u.get("blocked") else "✅"
+            name = users_db.get(uid, {}).get("name", "—")
+            text += f"{status} [{u['tg_name']}](tg://user?id={uid}) | @{u['username']} | {name} | {u['joined']}
+"
+        if len(all_users) > 30:
+            text += f"
+_...и ещё {len(all_users)-30} пользователей_"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🧪 Тест пост в канал", callback_data="admin_test")],
+        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_refresh")]
+    ])
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
+    await update.message.reply_text("🔄 Отправляю тестовый пост в канал...")
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_ID,
+            text="🧪 *Тестовый пост*
+
+Бот работает и может писать в канал! ✅
+
+Скоро здесь будут ежедневные гороскопы, лунный календарь и многое другое 🔮",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ Пост успешно отправлен в канал!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}
+
+Проверь что бот является администратором канала @astro_numerolog_ru")
+
+async def block_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /block 123456789")
+        return
+    uid = int(context.args[0])
+    if uid in all_users:
+        all_users[uid]["blocked"] = True
+        await update.message.reply_text(f"⛔ Пользователь {uid} заблокирован.")
+    else:
+        await update.message.reply_text("Пользователь не найден.")
+
+async def unblock_user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+    if not context.args:
+        await update.message.reply_text("Использование: /unblock 123456789")
+        return
+    uid = int(context.args[0])
+    if uid in all_users:
+        all_users[uid]["blocked"] = False
+        await update.message.reply_text(f"✅ Пользователь {uid} разблокирован.")
+    else:
+        await update.message.reply_text("Пользователь не найден.")
+
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -540,6 +647,10 @@ def main():
                        days=(6,))   # Воскресенье 10:00 МСК
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("test_post", test_post))
+    app.add_handler(CommandHandler("block", block_user_cmd))
+    app.add_handler(CommandHandler("unblock", unblock_user_cmd))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
