@@ -277,7 +277,7 @@ def back_menu():
     ])
 
 def channel_promo():
-    return "\n\n✨ *Подпишись на наш канал* — ежедневные гороскопы, лунный календарь и аффирмации: @astro_numerolog_ru" 
+    return "\n\n✨ *Подпишись на наш канал* — ежедневные гороскопы, лунный календарь и аффирмации: [Астро Нумеролог](https://t.me/astro_numerolog_ru)" 
 
 CELEBRITIES = ["Илон Маск","Тейлор Свифт","Дрейк","Ариана Гранде","Криштиану Роналду","Билл Гейтс","Леди Гага","Джонни Депп"]
 
@@ -329,7 +329,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🌟 Прогноз на целый год\n"
                 "🍀 Число удачи на сегодня\n\n"
                 "Выбери что тебя интересует 👇\n\n"
-                "📢 Подпишись на канал: @astro_numerolog_ru")
+                "📢 Подпишись на канал: [Астро Нумеролог](https://t.me/astro\_numerolog\_ru)")
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=main_menu(uid))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -498,6 +498,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_refresh":
         await show_admin_panel(query.message)
 
+    elif data == "admin_new_contest":
+        if query.from_user.id != ADMIN_ID:
+            return
+        user_states[query.from_user.id] = {"action": "admin_contest", "step": "days"}
+        await query.message.reply_text(
+            "🎉 *Создание конкурса*\n\n"
+            "Шаг 1: Напиши количество дней Premium для победителя\n"
+            "Например: *30*",
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_give_premium":
+        if query.from_user.id != ADMIN_ID:
+            return
+        user_states[query.from_user.id] = {"action": "admin_premium", "step": "uid"}
+        users_list = "\n".join([f"ID: `{uid}` — {u['tg_name']}" for uid, u in list(all_users.items())[:15]])
+        await query.message.reply_text(
+            f"🎁 *Выдать Premium*\n\n"
+            f"Список пользователей:\n{users_list}\n\n"
+            f"Напиши ID пользователя:",
+            parse_mode="Markdown"
+        )
+
+    elif data == "admin_broadcast":
+        if query.from_user.id != ADMIN_ID:
+            return
+        user_states[query.from_user.id] = {"action": "admin_broadcast", "step": "text"}
+        await query.message.reply_text(
+            "📢 *Рассылка*\n\n"
+            f"Получат сообщение: *{len(all_users)}* пользователей\n\n"
+            "Напиши текст сообщения:",
+            parse_mode="Markdown"
+        )
+
     elif data.startswith("contest_win_"):
         parts = data.split("_")
         cid = parts[2]
@@ -637,7 +671,7 @@ async def contest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"*{title}*\n\n"
         f"🏆 Приз: *{days} дней Premium* бесплатно!\n\n"
         f"Для участия:\n"
-        f"1. Подпишись на канал @astro_numerolog_ru\n"
+        f"1. Подпишись на канал https://t.me/astro_numerolog_ru\n"
         f"2. Напиши боту /start\n"
         f"3. Поделись ботом с другом\n\n"
         f"Победитель выбирается случайно! Удачи! 🍀"
@@ -786,6 +820,92 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lnum = lucky_number(uid)
             result = get_lucky_day_forecast(name, nums["zodiac"], nums["life_path"])
             await update.message.reply_text(f"🍀 *Число удачи сегодня: {lnum}*\n\n{result}\n\nПоделись! ✨", parse_mode="Markdown", reply_markup=back_menu())
+            user_states.pop(uid, None)
+
+    elif action == "admin_contest":
+        if uid != ADMIN_ID:
+            return
+        if step == "days":
+            try:
+                days = int(text)
+                user_states[uid]["days"] = days
+                user_states[uid]["step"] = "title"
+                await update.message.reply_text(f"✅ Приз: {days} дней Premium\n\nТеперь напиши *название конкурса*:", parse_mode="Markdown")
+            except:
+                await update.message.reply_text("❌ Напиши число, например: 30")
+        elif step == "title":
+            days = user_states[uid]["days"]
+            title = text
+            cid = str(len(contests) + 1)
+            contests[cid] = {"title": title, "days": days, "active": True, "winner_id": None}
+            contest_text = (
+                f"🎉 *КОНКУРС!*\n\n"
+                f"*{title}*\n\n"
+                f"🏆 Приз: *{days} дней Premium* бесплатно!\n\n"
+                f"Для участия:\n"
+                f"1. Подпишись на канал https://t.me/astro_numerolog_ru\n"
+                f"2. Напиши боту /start\n"
+                f"3. Поделись ботом с другом\n\n"
+                f"Победитель выбирается случайно! Удачи! 🍀"
+            )
+            try:
+                await context.bot.send_message(chat_id=CHANNEL_ID, text=contest_text, parse_mode="Markdown")
+                await update.message.reply_text("✅ Конкурс опубликован в канале!")
+            except Exception as e:
+                await update.message.reply_text(f"❌ Ошибка публикации: {e}")
+            buttons = []
+            for u_id, u_data in list(all_users.items())[:10]:
+                if not u_data.get("blocked"):
+                    buttons.append([InlineKeyboardButton(f"🏆 {u_data.get('tg_name','—')}", callback_data=f"contest_win_{cid}_{u_id}_{days}")])
+            if all_users:
+                rand_uid = random.choice(list(all_users.keys()))
+                buttons.append([InlineKeyboardButton("🎲 Случайный победитель", callback_data=f"contest_win_{cid}_{rand_uid}_{days}")])
+            if buttons:
+                await update.message.reply_text("Выбери победителя когда конкурс закончится:", reply_markup=InlineKeyboardMarkup(buttons))
+            user_states.pop(uid, None)
+
+    elif action == "admin_premium":
+        if uid != ADMIN_ID:
+            return
+        if step == "uid":
+            try:
+                target_uid = int(text)
+                user_states[uid]["target_uid"] = target_uid
+                user_states[uid]["step"] = "days"
+                target_name = all_users.get(target_uid, {}).get("tg_name", "—")
+                await update.message.reply_text(f"👤 Пользователь: *{target_name}*\n\nСколько дней Premium выдать?", parse_mode="Markdown")
+            except:
+                await update.message.reply_text("❌ Напиши числовой ID пользователя")
+        elif step == "days":
+            try:
+                days = int(text)
+                target_uid = user_states[uid]["target_uid"]
+                add_premium(target_uid, days)
+                target_name = all_users.get(target_uid, {}).get("tg_name", "—")
+                try:
+                    await context.bot.send_message(target_uid, f"🎁 *Подарок!*\n\nТебе начислено *{days} дней Premium* бесплатно! ✨", parse_mode="Markdown")
+                except:
+                    pass
+                await update.message.reply_text(f"✅ Выдано {days} дней Premium пользователю {target_name}!")
+                user_states.pop(uid, None)
+            except:
+                await update.message.reply_text("❌ Напиши число дней, например: 30")
+
+    elif action == "admin_broadcast":
+        if uid != ADMIN_ID:
+            return
+        if step == "text":
+            msg_text = text
+            await update.message.reply_text("📢 Начинаю рассылку...")
+            sent, failed = 0, 0
+            for u_id in all_users:
+                if not all_users[u_id].get("blocked"):
+                    try:
+                        await context.bot.send_message(u_id, f"📢 *Сообщение от Астро Нумеролога:*\n\n{msg_text}", parse_mode="Markdown")
+                        sent += 1
+                    except:
+                        failed += 1
+            await update.message.reply_text(f"✅ Рассылка завершена!\n\nОтправлено: {sent}\nОшибок: {failed}")
             user_states.pop(uid, None)
 
     elif action == "celeb_name":
