@@ -19,7 +19,11 @@ logger = logging.getLogger(__name__)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # ========== БАЗА ДАННЫХ ==========
-DB_FILE = "bot_data.json"
+# Данные хранятся в /data/bot_data.json (Railway Volume)
+# или в текущей папке как fallback
+DATA_DIR = "/data" if os.path.exists("/data") else "."
+DB_FILE = os.path.join(DATA_DIR, "bot_data.json")
+
 users_db = {}
 all_users = {}
 user_states = {}
@@ -36,35 +40,53 @@ def load_db():
             all_users = {int(k): v for k, v in data.get("all_users", {}).items()}
             contests = data.get("contests", {})
             sent_posts = data.get("sent_posts", {})
-            logger.info(f"База загружена: {len(all_users)} пользователей")
+            logger.info(f"База загружена из {DB_FILE}: {len(all_users)} пользователей")
+        else:
+            logger.info(f"База данных не найдена, начинаем с нуля. Путь: {DB_FILE}")
     except Exception as e:
         logger.error(f"Ошибка загрузки: {e}")
 
 def save_db():
     try:
+        os.makedirs(os.path.dirname(DB_FILE) if os.path.dirname(DB_FILE) else ".", exist_ok=True)
         data = {
             "users_db": {str(k): v for k, v in users_db.items()},
             "all_users": {str(k): v for k, v in all_users.items()},
             "contests": contests,
             "sent_posts": sent_posts
         }
-        with open(DB_FILE, "w", encoding="utf-8") as f:
+        # Пишем в временный файл потом переименовываем — атомарно
+        tmp = DB_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, DB_FILE)
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
+
+def backup_db():
+    """Резервная копия на случай потери"""
+    try:
+        backup = DB_FILE + ".bak"
+        if os.path.exists(DB_FILE):
+            import shutil
+            shutil.copy2(DB_FILE, backup)
+    except Exception as e:
+        logger.error(f"Ошибка резервной копии: {e}")
 
 def can_send_post(key):
     today = datetime.now().strftime("%d.%m.%Y")
     lock_key = f"{key}_{today}"
-    lock_file = f"lock_{key}.txt"
+    # Используем sent_posts в памяти + файл для персистентности
     if sent_posts.get(lock_key):
         return False
+    lock_file = os.path.join(DATA_DIR, f"lock_{key}.txt")
     try:
         if os.path.exists(lock_file):
             with open(lock_file, "r") as f:
                 if f.read().strip() == today:
                     sent_posts[lock_key] = True
                     return False
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(lock_file, "w") as f:
             f.write(today)
     except Exception as e:
@@ -1216,6 +1238,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     load_db()
+    backup_db()
+    logger.info(f"Хранилище: {DB_FILE}")
+    logger.info(f"Пользователей в базе: {len(all_users)}")
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     jq = app.job_queue
     # Расписание UTC (МСК = UTC+3)
